@@ -1,0 +1,3 @@
+[submodule "PriceFeeds/reflector-contract"]
+	path = PriceFeeds/reflector-contract
+	url = https://github.com/reflector-network/reflector-contract.git
