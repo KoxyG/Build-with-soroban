@@ -93,17 +93,24 @@ pub struct LendingProtocol;
 
 #[contractimpl]
 impl LendingProtocol {
-    pub fn __constructor(env: Env, config: Config) {
-        // Verify the oracle contract exists and is valid
+    pub fn initialize(env: Env, config: Config) -> Result<(), Error> {
         let oracle_client = reflector_contract::Client::new(&env, &config.oracle_address);
-        let _version = oracle_client.version();
-
+    
+        // Check the oracle contract version to ensure it's valid
+        let version = oracle_client.version();
+        if version == 0 {
+            return Err(Error::OracleError);
+        }
+    
         // Store configuration in contract storage
         env.storage().instance().set(&symbol_short!("oracle"), &config.oracle_address);
         env.storage().instance().set(&symbol_short!("admin"), &config.admin);
         env.storage().instance().set(&symbol_short!("min_loan"), &config.min_loan);
         env.storage().instance().set(&symbol_short!("max_loan"), &config.max_loan);
+    
+        Ok(())
     }
+    
 
     pub fn create_loan(
         env: Env,
