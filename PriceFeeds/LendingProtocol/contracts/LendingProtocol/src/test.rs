@@ -3,16 +3,12 @@ use super::*;
 use soroban_sdk::{Env, testutils::EnvTestConfig};
 use soroban_sdk::{testutils::{Address as _}, String, Address};
 
-
-/// Test Setup Information
-/// ---------------------
-/// Oracle Address: CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN
-/// Tests contract initialization and configuration storage
-
 #[test]
 fn test_init() {
     // Setup environment with snapshot
     let mut env: Env = Env::from_ledger_snapshot_file("../../snapshot.json");
+    
+    // Set config before any operations
     env.set_config(EnvTestConfig {
         capture_snapshot_at_drop: false,
     });
@@ -23,7 +19,7 @@ fn test_init() {
 
     // Create address for the reflector contract
     let reflector_address = Address::from_string(
-        &soroban_sdk::String::from_slice(
+        &String::from_slice(
             &env,
             "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
         )
@@ -43,7 +39,9 @@ fn test_init() {
     // Initialize the contract
     client.initialize(&config);
 
-    // Verify stored configuration
-    let stored_oracle: Address = env.storage().instance().get(&symbol_short!("oracle")).unwrap();
-    assert_eq!(stored_oracle, config.oracle_address);
+    // Verify stored configuration - Wrap in as_contract
+    env.as_contract(&contract_id, || {
+        let stored_oracle: Address = env.storage().instance().get(&symbol_short!("oracle")).unwrap();
+        assert_eq!(stored_oracle, config.oracle_address);
+    });
 }
