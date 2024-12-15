@@ -1,8 +1,8 @@
 #![no_std]
 use soroban_sdk::{
     symbol_short,
-    xdr::Asset,
-    contract, contractimpl, contracterror, contracttype, Address, Env, Symbol, Vec,
+    String,
+    contract, contractimpl, contracterror, contracttype, Address, Env, Vec,
     token::Client as TokenClient,
 };
 
@@ -21,11 +21,8 @@ pub struct Config {
     pub max_loan: i128,         // Maximum loan amount
 }
 
-
-
-// #[allow(dead_code)]
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Loan {
     pub amount: i128,
     pub interest_rate: u32,
@@ -34,11 +31,31 @@ pub struct Loan {
     pub funding_deadline: u64,
     pub borrower: Address,
     pub lender: Option<Address>,
-    pub collateral_asset: Asset,
+    pub collateral_asset: AssetInfo,
     pub token: Address,         // Loan token contract address
     pub collateral_amount: i128,
     pub active: bool,
     pub repaid: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[contracttype]
+pub struct AssetInfo {
+    pub code: String,
+    pub issuer: Address,
+}
+
+
+impl AssetInfo {
+    fn to_oracle_asset(&self, _env: &Env) -> reflector_contract::Asset {
+        // For native/stellar assets, use issuer address
+        if !self.code.is_empty() {
+            reflector_contract::Asset::Stellar(self.issuer.clone())
+        } else {
+            // For other assets, use the code as a symbol
+            reflector_contract::Asset::Other(symbol_short!("other"))  // Replace with appropriate symbol
+        }
+    }
 }
 
 #[contracttype]
@@ -47,7 +64,6 @@ pub struct PriceData {
     pub price: i128,
     pub timestamp: u64,
 }
-
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -77,17 +93,24 @@ pub struct LendingProtocol;
 
 #[contractimpl]
 impl LendingProtocol {
-    pub fn __constructor(env: Env, config: Config) {
-        // Verify the oracle contract exists and is valid
+    pub fn initialize(env: Env, config: Config) -> Result<(), Error> {
         let oracle_client = reflector_contract::Client::new(&env, &config.oracle_address);
-        let _version = oracle_client.version();
-
+    
+        // Check the oracle contract version to ensure it's valid
+        let version = oracle_client.version();
+        if version == 0 {
+            return Err(Error::OracleError);
+        }
+    
         // Store configuration in contract storage
         env.storage().instance().set(&symbol_short!("oracle"), &config.oracle_address);
         env.storage().instance().set(&symbol_short!("admin"), &config.admin);
         env.storage().instance().set(&symbol_short!("min_loan"), &config.min_loan);
         env.storage().instance().set(&symbol_short!("max_loan"), &config.max_loan);
+    
+        Ok(())
     }
+    
 
     pub fn create_loan(
         env: Env,
@@ -95,7 +118,8 @@ impl LendingProtocol {
         token: Address,
         interest_rate: u32,
         duration: u32,
-        collateral_asset: Asset,
+        borrower: Address,
+        collateral_asset: AssetInfo,
         collateral_amount: i128,
     ) -> Result<u32, Error> {
         let min_loan: i128 = env.storage().instance().get(&symbol_short!("min_loan"))
@@ -116,14 +140,11 @@ impl LendingProtocol {
             return Err(Error::InvalidDuration);
         }
 
-        // Calculate repayment amount using direct percentage
         let interest_amount = (amount * interest_rate as i128) / 100;
         let repayment_amount = amount + interest_amount;
         
-        // Set funding deadline
         let funding_deadline = env.ledger().timestamp() + (DAY_IN_LEDGERS as u64);
 
-        // Verify collateral value
         Self::verify_collateral_value(&env, amount, &collateral_asset, collateral_amount)?;
 
         let loan = Loan {
@@ -132,7 +153,7 @@ impl LendingProtocol {
             duration,
             repayment_amount,
             funding_deadline,
-            borrower: env.invoker().clone(),
+            borrower,
             lender: None,
             collateral_asset,
             token,
@@ -151,6 +172,7 @@ impl LendingProtocol {
         env: Env, 
         loan_id: u32,
         token: Address,
+        lender: Address,
         amount: i128
     ) -> Result<(), Error> {
         let mut loan: Loan = env.storage().instance().get(&loan_id)
@@ -166,17 +188,14 @@ impl LendingProtocol {
             return Err(Error::InvalidAmount);
         }
 
-        // Create token client
         let token_client = TokenClient::new(&env, &token);
-
-        // Transfer tokens from lender to borrower
         token_client.transfer(
-            &env.invoker(),
+            &lender,
             &loan.borrower,
             &amount
         );
 
-        loan.lender = Some(env.invoker().clone());
+        loan.lender = Some(lender);
         loan.active = false;
 
         env.storage().instance().set(&loan_id, &loan);
@@ -187,12 +206,13 @@ impl LendingProtocol {
         env: Env, 
         loan_id: u32,
         token: Address,
+        borrower: Address,
         amount: i128
     ) -> Result<(), Error> {
         let mut loan: Loan = env.storage().instance().get(&loan_id)
             .ok_or(Error::InactiveLoan)?;
 
-        if env.invoker() != loan.borrower {
+        if borrower != loan.borrower {
             return Err(Error::Unauthorized);
         }
         if amount != loan.repayment_amount {
@@ -201,10 +221,7 @@ impl LendingProtocol {
 
         let lender = loan.lender.clone().ok_or(Error::InactiveLoan)?;
 
-        // Create token client
         let token_client = TokenClient::new(&env, &token);
-
-        // Transfer repayment amount from borrower to lender
         token_client.transfer(
             &loan.borrower,
             &lender,
@@ -227,7 +244,7 @@ impl LendingProtocol {
         let loan_count = Self::get_next_loan_id(&env);
 
         for id in 0..loan_count {
-            if let Some(loan) = env.storage().instance().get(&id) {
+            if let Some(loan) = env.storage().instance().get::<u32, Loan>(&id) {
                 if loan.active {
                     active_loans.push_back((id, loan));
                 }
@@ -238,20 +255,27 @@ impl LendingProtocol {
 
     pub fn get_cross_asset_price(
         env: Env,
-        base_asset: Asset,
-        quote_asset: Asset,
+        base_asset: AssetInfo,
+        quote_asset: AssetInfo,
     ) -> Result<PriceData, Error> {
-        let oracle_address: Address = env.storage().instance().get(&symbol_short!("oracle"))
+        let oracle_address: Address = env.storage().instance()
+            .get(&symbol_short!("oracle"))
             .ok_or(Error::OracleError)?;
         
         let oracle = reflector_contract::Client::new(&env, &oracle_address);
         
-        let price_data = oracle.x_last_price(&base_asset, &quote_asset)
+        let base = base_asset.to_oracle_asset(&env);
+        let quote = quote_asset.to_oracle_asset(&env);
+        
+        let oracle_price = oracle.x_last_price(&base, &quote)
             .ok_or(Error::OracleError)?;
             
-        Ok(price_data)
+        Ok(PriceData {
+            price: oracle_price.price,
+            timestamp: oracle_price.timestamp,
+        })
     }
-
+    
     pub fn liquidate(env: Env, loan_id: u32) -> Result<(), Error> {
         let loan: Loan = env.storage().instance().get(&loan_id)
             .ok_or(Error::InactiveLoan)?;
@@ -265,21 +289,17 @@ impl LendingProtocol {
             .ok_or(Error::OracleError)?;
         
         let oracle = reflector_contract::Client::new(&env, &oracle_address);
-        let price_data = oracle.lastprice(&loan.collateral_asset)
+        let oracle_asset = loan.collateral_asset.to_oracle_asset(&env);
+        let price_data = oracle.lastprice(&oracle_asset)
             .ok_or(Error::OracleError)?;
 
         let decimals = oracle.decimals();
         let collateral_value = (loan.collateral_amount * price_data.price) 
             / 10i128.pow(decimals);
         
-        // Check if below 120% collateralization
         if collateral_value >= (loan.amount * 120) / 100 {
             return Err(Error::CannotLiquidate);
         }
-
-        // Handle liquidation logic here
-        // Transfer collateral to liquidator
-        // Transfer remaining value to borrower
 
         env.storage().instance().set(&loan_id, &Loan {
             active: false,
@@ -290,12 +310,12 @@ impl LendingProtocol {
         Ok(())
     }
 
-    pub fn update_oracle(env: Env, new_oracle: Address) -> Result<(), Error> {
+    pub fn update_oracle(env: Env, new_oracle: Address, updater: Address) -> Result<(), Error> {
         let admin: Address = env.storage().instance()
             .get(&symbol_short!("admin"))
             .ok_or(Error::Unauthorized)?;
 
-        if env.invoker() != admin {
+        if updater != admin {
             return Err(Error::Unauthorized);
         }
 
@@ -309,7 +329,7 @@ impl LendingProtocol {
     fn verify_collateral_value(
         env: &Env,
         loan_amount: i128,
-        collateral_asset: &Asset,
+        collateral_asset: &AssetInfo,
         collateral_amount: i128,
     ) -> Result<(), Error> {
         let oracle_address: Address = env.storage().instance()
@@ -318,13 +338,13 @@ impl LendingProtocol {
 
         let oracle = reflector_contract::Client::new(env, &oracle_address);
         
-        let price_data = oracle.lastprice(collateral_asset)
+        let oracle_asset = collateral_asset.to_oracle_asset(env);
+        let price_data = oracle.lastprice(&oracle_asset)
             .ok_or(Error::OracleError)?;
 
         let decimals = oracle.decimals();
         let collateral_value = (collateral_amount * price_data.price) / 10i128.pow(decimals);
         
-        // Require 150% collateralization
         if collateral_value < (loan_amount * 150) / 100 {
             return Err(Error::InsufficientCollateral);
         }
@@ -339,6 +359,5 @@ impl LendingProtocol {
         count
     }
 }
-
 
 mod test;
