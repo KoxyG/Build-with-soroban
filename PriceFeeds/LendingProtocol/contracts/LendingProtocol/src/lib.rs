@@ -58,12 +58,6 @@ impl AssetInfo {
     }
 }
 
-#[contracttype]
-#[derive(Clone)]
-pub struct PriceData {
-    pub price: i128,
-    pub timestamp: u64,
-}
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
@@ -82,6 +76,8 @@ pub enum Error {
     InvalidRepaymentAmount = 11,
     TokenTransferFailed = 12,
     CannotLiquidate = 13,
+    OraclePriceUnavailable = 14,
+    OracleNotInitialized = 15,  
 }
 
 const MIN_INTEREST_RATE: u32 = 1;   // 1%
@@ -93,24 +89,23 @@ pub struct LendingProtocol;
 
 #[contractimpl]
 impl LendingProtocol {
-    pub fn initialize(env: Env, config: Config) -> Result<(), Error> {
-        let oracle_client = reflector_contract::Client::new(&env, &config.oracle_address);
-    
-        // Check the oracle contract version to ensure it's valid
-        let version = oracle_client.version();
-        if version == 0 {
-            return Err(Error::OracleError);
-        }
-    
-        // Store configuration in contract storage
-        env.storage().instance().set(&symbol_short!("oracle"), &config.oracle_address);
-        env.storage().instance().set(&symbol_short!("admin"), &config.admin);
-        env.storage().instance().set(&symbol_short!("min_loan"), &config.min_loan);
-        env.storage().instance().set(&symbol_short!("max_loan"), &config.max_loan);
-    
-        Ok(())
+   pub fn initialize(env: Env, config: Config) -> Result<(), Error> {
+    let oracle_client = reflector_contract::Client::new(&env, &config.oracle_address);
+
+    // Check the oracle contract version to ensure it's valid
+    let version = oracle_client.version();
+    if version == 0 {
+        return Err(Error::OracleError);
     }
-    
+
+    // Store configuration in contract storage
+    env.storage().instance().set(&symbol_short!("oracle"), &config.oracle_address);
+    env.storage().instance().set(&symbol_short!("admin"), &config.admin);
+    env.storage().instance().set(&symbol_short!("min_loan"), &config.min_loan);
+    env.storage().instance().set(&symbol_short!("max_loan"), &config.max_loan);
+
+    Ok(())
+}
 
     pub fn create_loan(
         env: Env,
@@ -257,7 +252,7 @@ impl LendingProtocol {
         env: Env,
         base_asset: AssetInfo,
         quote_asset: AssetInfo,
-    ) -> Result<PriceData, Error> {
+    ) -> Result<reflector_contract::PriceData, Error> {
         let oracle_address: Address = env.storage().instance()
             .get(&symbol_short!("oracle"))
             .ok_or(Error::OracleError)?;
@@ -270,7 +265,7 @@ impl LendingProtocol {
         let oracle_price = oracle.x_last_price(&base, &quote)
             .ok_or(Error::OracleError)?;
             
-        Ok(PriceData {
+        Ok(reflector_contract::PriceData {
             price: oracle_price.price,
             timestamp: oracle_price.timestamp,
         })
@@ -332,6 +327,7 @@ impl LendingProtocol {
         collateral_asset: &AssetInfo,
         collateral_amount: i128,
     ) -> Result<(), Error> {
+        let _price_data = Self::get_price_data(env, collateral_asset)?;
         let oracle_address: Address = env.storage().instance()
             .get(&symbol_short!("oracle"))
             .ok_or(Error::OracleError)?;
@@ -341,6 +337,10 @@ impl LendingProtocol {
         let oracle_asset = collateral_asset.to_oracle_asset(env);
         let price_data = oracle.lastprice(&oracle_asset)
             .ok_or(Error::OracleError)?;
+        let version = oracle.version();
+        if version == 0 {
+            return Err(Error::OracleError);
+        }
 
         let decimals = oracle.decimals();
         let collateral_value = (collateral_amount * price_data.price) / 10i128.pow(decimals);
@@ -350,6 +350,21 @@ impl LendingProtocol {
         }
 
         Ok(())
+    }
+
+    fn get_price_data(
+        env: &Env,
+        asset: &AssetInfo,
+    ) -> Result<reflector_contract::PriceData, Error> {
+        let oracle_address: Address = env.storage().instance()
+            .get(&symbol_short!("oracle"))
+            .ok_or(Error::OracleError)?;
+        
+        let oracle = reflector_contract::Client::new(env, &oracle_address);
+        let oracle_asset = asset.to_oracle_asset(env);
+        
+        oracle.lastprice(&oracle_asset)
+            .ok_or(Error::OracleError)
     }
 
     fn get_next_loan_id(env: &Env) -> u32 {
