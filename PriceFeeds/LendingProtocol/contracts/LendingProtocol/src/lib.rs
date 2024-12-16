@@ -122,6 +122,8 @@ impl LendingProtocol {
         let max_loan: i128 = env.storage().instance().get(&symbol_short!("max_loan"))
             .expect("Max loan not set");
 
+        
+
         if amount < min_loan {
             return Err(Error::LoanTooSmall);
         }

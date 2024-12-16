@@ -14,14 +14,25 @@ fn test_init() {
     });
 
     // Register the contract
-    let contract_id = env.register_contract(None, LendingProtocol);
+    
+    let contract_id = env.register(LendingProtocol, ());
     let client = LendingProtocolClient::new(&env, &contract_id);
 
+    // MAINNET
+    // Create address for the reflector contract
+    // let reflector_address = Address::from_string(
+    //     &String::from_slice(
+    //         &env,
+    //         "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+    //     )
+    // );
+
+    // TESTNET
     // Create address for the reflector contract
     let reflector_address = Address::from_string(
         &String::from_slice(
             &env,
-            "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
+            "CAVLP5DH2GJPZMVO7IJY4CVOD5MWEFTJFVPD2YY2FQXOQHRGHK4D6HLP"
         )
     );
 
@@ -46,30 +57,13 @@ fn test_init() {
     });
 }
 
-
 // #[test]
 // fn test_loan_repayment() {
-//     // Setup environment with snapshot
-//     let mut env: Env = Env::from_ledger_snapshot_file("../../snapshot.json");
-    
-//     env.set_config(EnvTestConfig {
-//         capture_snapshot_at_drop: false,
-//     });
-
-//     // Register the lending contract
-//     let contract_id = env.register_contract(None, LendingProtocol);
+//     let mut env: Env = Env::default();
+//     let contract_id = env.register(LendingProtocol, ());
 //     let client = LendingProtocolClient::new(&env, &contract_id);
 
-//     // Use the same oracle address as in your working test
-//     let oracle_address = Address::from_string(
-//         &String::from_str(
-//             &env,
-//             "CAFJZQWSED6YAWZU3GWRTOCNPPCGBN32L7QV43XX5LZLFTK6JLN34DLN"
-//         )
-//     );
-
-//     // Initialize the contract first
-//     let admin = Address::generate(&env);
+//     // Initialize with proper minimum values
 //     let config = Config {
 //         oracle_address: oracle_address.clone(),
 //         admin: admin.clone(),
@@ -78,42 +72,21 @@ fn test_init() {
 //     };
 //     client.initialize(&config);
 
-//     // Test variables
-//     let borrower = Address::generate(&env);
-//     let token = Address::generate(&env);
-    
-//     // Create loan parameters
-//     let amount = 1000_0000000; // 1000 tokens
-//     let interest_rate = 5; // 5%
-//     let duration = 30 * DAY_IN_LEDGERS; // 30 days
-    
-//     // Create asset info
-//     let collateral_asset = AssetInfo {
-//         code: String::from_str(&env, "XLM"),
-//         issuer: Address::generate(&env),
-//     };
-//     let collateral_amount = 2000_0000000; // 2000 tokens as collateral
+//     // Use proper amounts
+//     let amount = 1000_0000000; // Meets minimum requirement
+//     let collateral_amount = 2000_0000000;
 
-//     // Create the loan
-//     let loan_id = client.create_loan(
+//     // Create loan with proper values
+//     let result = client.create_loan(
 //         &amount,
 //         &token,
 //         &interest_rate,
 //         &duration,
 //         &borrower,
-//         &collateral_asset,
+//         &collateral_ass                                                                                          ,
 //         &collateral_amount
 //     );
 
-//     // Verify loan
-//     let loan = client.get_loan(&loan_id).expect("Loan should exist");
-//     assert_eq!(loan.amount, amount);
-//     assert_eq!(loan.borrower, borrower);
-//     assert_eq!(loan.token, token);
-//     assert_eq!(loan.interest_rate, interest_rate);
-//     assert_eq!(loan.duration, duration);
-//     assert_eq!(loan.collateral_asset, collateral_asset);
-//     assert_eq!(loan.collateral_amount, collateral_amount);
-//     assert!(loan.active);
-//     assert!(!loan.repaid);
+  
+   
 // }
